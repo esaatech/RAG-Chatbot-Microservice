@@ -4,6 +4,9 @@ from typing import Optional, Dict
 import uuid
 from dotenv import load_dotenv
 import os
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from typing import Optional
+import json
 
 # Load environment variables
 load_dotenv()
@@ -83,38 +86,46 @@ async def delete_document(document_key: str):
         raise HTTPException(status_code=500, detail=str(e))
     
 
+# app/main.py
 @app.put("/documents/{document_key}/update")
 async def update_document(
     document_key: str,
     file: UploadFile = File(...),
-    prompt_config: Optional[Dict] = None
-):
-    """Update an existing document"""
+    prompt_config: Optional[str] = Form(None)  # Changed to str to accept JSON string
+    ):   
+
+    """Update an existing document with optional prompt configuration"""
     try:
         new_key = str(uuid.uuid4())
+        
+        # Parse prompt_config from JSON string if provided
+        config_dict = json.loads(prompt_config) if prompt_config else None
+        
         success = chatbot_service.update_document(
             old_key=document_key,
             new_key=new_key,
             file=file.file,
             filename=file.filename,
-            prompt_config=prompt_config
+            prompt_config=config_dict
         )
         
         if success:
             return {
                 "old_key": document_key,
                 "new_key": new_key,
+                "prompt_config": config_dict,
                 "message": "Document updated successfully"
             }
         raise HTTPException(status_code=500, detail="Failed to update document")
     
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in prompt_config")
     except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Document with key {document_key} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Document with key {document_key} not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 @app.get("/health")
