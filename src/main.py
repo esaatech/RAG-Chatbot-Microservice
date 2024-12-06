@@ -13,7 +13,7 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    return {"message": "RAG Chatbot Service is running"}
+    return {"message": "RAG Chatbot Service is run"}
 
 if __name__ == "__main__":
     import uvicorn
