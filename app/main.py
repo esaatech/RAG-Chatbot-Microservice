@@ -31,25 +31,34 @@ chatbot_service = ChatbotService()
 @app.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    prompt_config: Optional[Dict] = None
+    prompt_config: Optional[str] = Form(None)
 ):
-    """Upload a new document"""
+    """Upload a new document with optional prompt configuration"""
     try:
         document_key = str(uuid.uuid4())
+        
+        # Parse prompt_config from JSON string if provided
+        config_dict = json.loads(prompt_config) if prompt_config else None
+        
         success = chatbot_service.process_document(
             file=file.file,
             key=document_key,
             filename=file.filename,
-            prompt_config=prompt_config
+            prompt_config=config_dict
         )
         
         if success:
-            return {"key": document_key, "message": "Document processed successfully"}
+            return {
+                "key": document_key,
+                "prompt_config": config_dict,
+                "message": "Document processed successfully"
+            }
         raise HTTPException(status_code=500, detail="Failed to process document")
     
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in prompt_config")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/documents/{document_key}/query")
 async def query_document(
     document_key: str, 
