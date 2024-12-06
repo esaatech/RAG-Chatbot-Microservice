@@ -2,23 +2,44 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install poetry
-RUN pip install poetry
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_VERSION=1.7.1 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_CREATE=false \
+    PORT=8090
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Configure poetry to not create a virtual environment
-RUN poetry config virtualenvs.create false
+# Install Poetry
+RUN curl -sSL https://install.python-poetry.org | python3 -
+ENV PATH="${POETRY_HOME}/bin:$PATH"
+
+# Copy poetry files
+COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies
-RUN poetry install --no-dev
+RUN poetry install --no-dev --no-interaction --no-ansi
+
+# Create data directories
+RUN mkdir -p /app/data/vectorstore /app/data/temp
+RUN chmod 777 /app/data/vectorstore /app/data/temp
 
 # Copy application code
-COPY src/ ./src/
+COPY ./app ./app
 
-# Cloud Run will set PORT environment variable
-ENV PORT=8090
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Run the application
-CMD exec poetry run uvicorn src.main:app --host 0.0.0.0 --port ${PORT}
+# Expose port
+EXPOSE 8090
+
+# Container startup
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
