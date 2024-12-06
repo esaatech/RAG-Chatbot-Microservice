@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  PROJECT_ID: esaasolutions    # Replace with your GCP project ID
+  PROJECT_ID: esaasolution   # Replace with your GCP project ID
   SERVICE_NAME: rag-chatbot-api    # Replace with your desired service name
   REGION: us-central1           # Replace with your desired region
 
