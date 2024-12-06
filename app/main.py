@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File,Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Dict
 import uuid
@@ -48,12 +48,21 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/documents/{document_key}/query")
-async def query_document(document_key: str, query: str):
+async def query_document(
+    document_key: str, 
+    query: str = Query(None),  # From URL query parameter
+    body: dict = Body(None)    # From request body
+):
     """Query a specific document"""
     try:
+        # Use query from URL parameter or body
+        query_text = query or body.get("query")
+        if not query_text:
+            raise HTTPException(status_code=400, detail="Query is required")
+            
         response = chatbot_service.query_document(
             key=document_key,
-            query=query
+            query=query_text
         )
         return {"response": response}
     
