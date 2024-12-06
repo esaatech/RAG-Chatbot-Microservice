@@ -81,6 +81,41 @@ async def delete_document(document_key: str):
         raise HTTPException(status_code=404, detail=f"Document with key {document_key} not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.put("/documents/{document_key}/update")
+async def update_document(
+    document_key: str,
+    file: UploadFile = File(...),
+    prompt_config: Optional[Dict] = None
+):
+    """Update an existing document"""
+    try:
+        new_key = str(uuid.uuid4())
+        success = chatbot_service.update_document(
+            old_key=document_key,
+            new_key=new_key,
+            file=file.file,
+            filename=file.filename,
+            prompt_config=prompt_config
+        )
+        
+        if success:
+            return {
+                "old_key": document_key,
+                "new_key": new_key,
+                "message": "Document updated successfully"
+            }
+        raise HTTPException(status_code=500, detail="Failed to update document")
+    
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document with key {document_key} not found"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health_check():
