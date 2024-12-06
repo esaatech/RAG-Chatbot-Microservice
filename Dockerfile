@@ -26,20 +26,19 @@ COPY pyproject.toml poetry.lock* ./
 # Install dependencies
 RUN poetry install --no-dev --no-interaction --no-ansi
 
-# Create data directories
-RUN mkdir -p /app/data/vectorstore /app/data/temp
-RUN chmod 777 /app/data/vectorstore /app/data/temp
+# Create data directories with proper permissions
+RUN mkdir -p /app/data/vectorstore /app/data/temp \
+    && chmod 777 /app/data/vectorstore /app/data/temp
 
 # Copy application code
 COPY ./app ./app
 
 # Create non-root user
-RUN adduser --disabled-password --gecos '' appuser
-RUN chown -R appuser:appuser /app
+RUN adduser --disabled-password --gecos '' appuser \
+    && chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
-EXPOSE 8090
+EXPOSE ${PORT}
 
-# Container startup
+# Cloud Run will send SIGTERM signal to stop the container
 CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
