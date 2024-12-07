@@ -6,9 +6,10 @@ on:
       - main
 
 env:
-  PROJECT_ID: esaasolution   # Replace with your GCP project ID
-  SERVICE_NAME: rag-chatbot-api    # Replace with your desired service name
-  REGION: us-central1           # Replace with your desired region
+  PROJECT_ID: esaasolution
+  SERVICE_NAME: rag-chatbot-api
+  REGION: us-central1
+  BUCKET_NAME: rag-chatbot-vectors-esaasolution  # Add bucket name
 
 jobs:
   deploy:
@@ -40,4 +41,5 @@ jobs:
             --region=${{ env.REGION }} \
             --platform=managed \
             --allow-unauthenticated \
-            --set-env-vars=OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            --set-env-vars=OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+            --set-env-vars=BUCKET_NAME=${{ env.BUCKET_NAME }} \
