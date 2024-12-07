@@ -10,6 +10,8 @@ import json
 
 # Load environment variables
 load_dotenv()
+assert os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None, "Google credentials not found"
+assert os.getenv('OPENAI_API_KEY') is not None, "OpenAI API key not found"  
 from app.services.chatbot import ChatbotService
 # Verify OpenAI API key is set
 if not os.getenv("OPENAI_API_KEY"):

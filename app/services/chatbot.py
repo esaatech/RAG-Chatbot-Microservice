@@ -3,9 +3,11 @@ import os
 import uuid
 import shutil
 import time
+import tempfile
 from typing import Dict, BinaryIO, List, Optional
 from collections import defaultdict
 from pathlib import Path
+from google.cloud import storage
 
 # LangChain imports
 from langchain_community.chat_models import ChatOpenAI
@@ -26,7 +28,7 @@ from langchain_community.document_loaders import (
 )
 
 class ChatbotService:
-    """Service for handling document processing, vectorization, and querying."""
+    """Service for handling document processing, vectorization, and querying with GCS storage."""
     
     DEFAULT_PROMPT_CONFIG = {
         "company_name": "Esaa",
@@ -37,7 +39,7 @@ class ChatbotService:
     }
 
     def __init__(self):
-        """Initialize the ChatbotService with necessary components and directories."""
+        """Initialize the ChatbotService with GCS integration."""
         # Initialize LangChain components
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         self.llm = ChatOpenAI(model="gpt-4")
@@ -46,14 +48,42 @@ class ChatbotService:
         self.chat_histories = defaultdict(list)
         self.prompt_configs = {}
         
-        # Set up data directories using relative path from project root
-        self.base_dir = Path(__file__).parent.parent.parent / "data"
-        self.vectorstore_dir = self.base_dir / "vectorstore"
-        self.temp_dir = self.base_dir / "temp"
+        # Initialize GCS client
+        self.storage_client = storage.Client()
+        self.bucket_name = "rag-chatbot-vectors-esaasolution"
+        self.bucket = self.storage_client.bucket(self.bucket_name)
         
-        # Create directories
-        self.vectorstore_dir.mkdir(parents=True, exist_ok=True)
+        # Set up temporary directory for processing
+        self.temp_dir = Path(tempfile.gettempdir()) / "rag-chatbot"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def _upload_to_gcs(self, source_path: Path, key: str):
+        """Upload files to GCS bucket."""
+        prefix = f"vectorstore/{key}"
+        for file_path in source_path.glob('**/*'):
+            if file_path.is_file():
+                relative_path = file_path.relative_to(source_path)
+                blob = self.bucket.blob(f"{prefix}/{relative_path}")
+                blob.upload_from_filename(str(file_path))
+
+    def _download_from_gcs(self, key: str, target_path: Path):
+        """Download files from GCS bucket."""
+        prefix = f"vectorstore/{key}"
+        blobs = self.bucket.list_blobs(prefix=prefix)
+        target_path.mkdir(parents=True, exist_ok=True)
+        
+        for blob in blobs:
+            relative_path = Path(blob.name).relative_to(prefix)
+            local_path = target_path / relative_path
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            blob.download_to_filename(str(local_path))
+
+    def _delete_from_gcs(self, key: str):
+        """Delete files from GCS bucket."""
+        prefix = f"vectorstore/{key}"
+        blobs = self.bucket.list_blobs(prefix=prefix)
+        for blob in blobs:
+            blob.delete()
 
     def _save_temp_file(self, file: BinaryIO, filename: str) -> Path:
         """Save uploaded file temporarily."""
@@ -116,14 +146,12 @@ class ChatbotService:
         if file_extension not in loader_map:
             raise ValueError(f"Unsupported file type: {file_extension}")
 
-        # Load the document using the appropriate loader
         loader = loader_map[file_extension](file_path)
         documents = loader.load()
 
         if not documents:
             return []
 
-        # Split the document into chunks
         text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         return text_splitter.split_documents(documents)
 
@@ -132,7 +160,6 @@ class ChatbotService:
         if not documents:
             raise ValueError("No documents to vectorize")
 
-        # Create a vectorstore from documents
         vectorstore = Chroma.from_documents(
             documents,
             self.embeddings,
@@ -142,13 +169,11 @@ class ChatbotService:
         return vectorstore
 
     def process_document(self, file: BinaryIO, key: str, filename: str, prompt_config: Optional[Dict] = None) -> bool:
-        """Process and vectorize a document."""
-        vectorstore_path = self.vectorstore_dir / key
+        """Process and vectorize a document, storing in GCS."""
+        temp_vectorstore_path = self.temp_dir / f"vectorstore_{key}"
         try:
             # Save file temporarily
-            temp_path = self._save_temp_file(file, filename)
-            
-            print(f"Processing document: {filename} for key: {key}")
+            temp_file_path = self._save_temp_file(file, filename)
             
             try:
                 # Store prompt configuration
@@ -158,39 +183,40 @@ class ChatbotService:
                 }
 
                 # Load and split document
-                documents = self.load_and_split_document(str(temp_path), filename)
+                documents = self.load_and_split_document(str(temp_file_path), filename)
                 if not documents:
                     raise ValueError(f"No content extracted from file: {filename}")
 
-                # Vectorize documents
-                print(f"Vectorizing documents, saving to: {vectorstore_path}")
-                self.vectorize_documents(documents, str(vectorstore_path))
+                # Vectorize documents locally first
+                self.vectorize_documents(documents, str(temp_vectorstore_path))
+                
+                # Upload to GCS
+                self._upload_to_gcs(temp_vectorstore_path, key)
                 return True
 
             finally:
-                self._cleanup_temp_file(temp_path)
+                self._cleanup_temp_file(temp_file_path)
+                if temp_vectorstore_path.exists():
+                    shutil.rmtree(str(temp_vectorstore_path))
 
         except Exception as e:
             print(f"Error processing document: {e}")
-            if vectorstore_path.exists():
-                shutil.rmtree(str(vectorstore_path))
+            self._delete_from_gcs(key)
             raise
 
     def query_document(self, key: str, query: str) -> str:
-        """Query the document and get a response."""
+        """Query the document from GCS and get a response."""
+        temp_vectorstore_path = self.temp_dir / f"vectorstore_{key}"
         try:
-            vectorstore_path = self.vectorstore_dir / key
-            
-            if not vectorstore_path.exists():
-                raise FileNotFoundError(f"No document found for key: {key}")
-
-            print(f"Querying vectorstore at: {vectorstore_path}")
+            # Download vectors from GCS
+            self._download_from_gcs(key, temp_vectorstore_path)
             
             try:
                 db = Chroma(
-                    persist_directory=str(vectorstore_path), 
+                    persist_directory=str(temp_vectorstore_path), 
                     embedding_function=self.embeddings
                 )
+                
                 retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 3})
                 
                 history_aware_retriever = create_history_aware_retriever(
@@ -221,67 +247,34 @@ class ChatbotService:
 
                 return result["answer"]
 
-            except Exception as e:
-                print(f"Error in query processing: {str(e)}")
-                raise
+            finally:
+                if temp_vectorstore_path.exists():
+                    shutil.rmtree(str(temp_vectorstore_path))
 
         except Exception as e:
             print(f"Error querying document: {e}")
             raise
 
     def delete_vectorstore(self, key: str) -> bool:
-        """Delete vector store for a key."""
+        """Delete vector store from GCS."""
         try:
-            vectorstore_path = self.vectorstore_dir / key
-            if vectorstore_path.exists():
-                self._force_close_chroma_connection(str(vectorstore_path))
-                self._safe_remove_directory(vectorstore_path)
-                return True
-            return False
+            self._delete_from_gcs(key)
+            return True
         except Exception as e:
+            print(f"Error deleting from GCS: {e}")
             raise
-
-    def _force_close_chroma_connection(self, persist_directory: str):
-        """Force close any open connections to the vectorstore."""
-        try:
-            temp_db = Chroma(
-                persist_directory=persist_directory, 
-                embedding_function=self.embeddings
-            )
-            temp_db.persist()
-            del temp_db
-        except Exception:
-            pass
-
-    def _safe_remove_directory(self, directory: Path):
-        """Safely remove a directory with retries."""
-        max_retries = 5
-        for i in range(max_retries):
-            try:
-                if directory.exists():
-                    shutil.rmtree(str(directory))
-                return
-            except Exception as e:
-                if i == max_retries - 1:
-                    raise
-                time.sleep(1)
 
     def update_document(self, old_key: str, new_key: str, file: BinaryIO, filename: str, 
                        prompt_config: Optional[Dict] = None) -> bool:
-        """Update a document with a new version."""
+        """Update a document with a new version in GCS."""
         try:
-            old_vectorstore_path = self.vectorstore_dir / old_key
-            if not old_vectorstore_path.exists():
-                raise FileNotFoundError(f"No document found for key: {old_key}")
-            
             # Process new document
             success = self.process_document(file, new_key, filename, prompt_config)
             if success:
-                # Delete old vectorstore
+                # Delete old vectorstore from GCS
                 self.delete_vectorstore(old_key)
                 return True
             return False
-
         except Exception as e:
             print(f"Error updating document: {e}")
             self.delete_vectorstore(new_key)
@@ -289,16 +282,21 @@ class ChatbotService:
 
     def get_document_info(self, key: str) -> Dict:
         """Get information about a document."""
-        vectorstore_path = self.vectorstore_dir / key
-        if not vectorstore_path.exists():
-            raise FileNotFoundError(f"No document found for key: {key}")
+        try:
+            # Check if document exists in GCS
+            prefix = f"vectorstore/{key}"
+            blobs = list(self.bucket.list_blobs(prefix=prefix))
+            exists = len(blobs) > 0
 
-        return {
-            "key": key,
-            "exists": True,
-            "prompt_config": self.prompt_configs.get(key, self.DEFAULT_PROMPT_CONFIG),
-            "chat_history_length": len(self.chat_histories[key])
-        }
+            return {
+                "key": key,
+                "exists": exists,
+                "prompt_config": self.prompt_configs.get(key, self.DEFAULT_PROMPT_CONFIG),
+                "chat_history_length": len(self.chat_histories[key])
+            }
+        except Exception as e:
+            print(f"Error getting document info: {e}")
+            raise
 
     def clear_chat_history(self, key: str) -> bool:
         """Clear chat history for a specific document."""
@@ -310,9 +308,7 @@ class ChatbotService:
     def __del__(self):
         """Cleanup on service destruction."""
         try:
-            # Clean up temp directory
             if self.temp_dir.exists():
                 shutil.rmtree(str(self.temp_dir))
-                self.temp_dir.mkdir(exist_ok=True)
         except Exception as e:
             print(f"Error during cleanup: {e}")
