@@ -38,7 +38,8 @@ RUN adduser --disabled-password --gecos '' appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
+# Expose the port
+ENV PORT=8090
 EXPOSE ${PORT}
-
 # Cloud Run will send SIGTERM signal to stop the container
 CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
