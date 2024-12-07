@@ -8,6 +8,8 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from typing import Optional
 import json
 from datetime import datetime
+from fastapi.openapi.docs import get_swagger_ui_html
+
 # Load environment variables
 load_dotenv()
 #assert os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None, "Google credentials not found"
@@ -16,8 +18,22 @@ from app.services.chatbot import ChatbotService
 # Verify OpenAI API key is set
 if not os.getenv("OPENAI_API_KEY"):
     raise ValueError("OPENAI_API_KEY environment variable is not set")
-app = FastAPI(title="RAG Chatbot API")
-
+app = FastAPI(
+    title="RAG Chatbot API",
+    description="""
+    A RAG (Retrieval-Augmented Generation) Chatbot API that processes documents, 
+    handles vector storage, and provides conversational responses.
+    
+    Key Features:
+    - Document processing and vectorization
+    - Configurable prompt handling
+    - Caching system
+    - Chat history management
+    """,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +51,37 @@ async def upload_document(
     file: UploadFile = File(...),
     prompt_config: Optional[str] = Form(None)
 ):
-    """Upload a new document with optional prompt configuration"""
+    """
+        Upload and process a new document.
+
+        Parameters:
+        - file: Document file (PDF, TXT, DOCX, CSV)
+        - prompt_config: Optional configuration for response generation
+            {
+                "company_name": str,
+                "agent_role": str,
+                "response_style": str,
+                "fallback_message": str,
+                "tone": str
+            }
+
+        Returns:
+        {
+            "key": str,  # Unique document identifier
+            "message": str,
+            "config": Dict  # Applied configuration
+        }
+
+        Example:
+        ```python
+        files = {'file': open('document.pdf', 'rb')}
+        config = {
+            'company_name': 'TestCo',
+            'tone': 'professional'
+        }
+        response = requests.post('/documents/upload', files=files, json={'prompt_config': config})
+        ```
+        """
     try:
         document_key = str(uuid.uuid4())
         
