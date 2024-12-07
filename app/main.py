@@ -7,7 +7,7 @@ import os
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from typing import Optional
 import json
-
+from datetime import datetime
 # Load environment variables
 load_dotenv()
 #assert os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None, "Google credentials not found"
@@ -137,7 +137,46 @@ async def update_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.put("/documents/{key}/update-config")
+async def update_document_config(
+    key: str,
+    prompt_config: Dict = Body(..., description="New prompt configuration")
+) -> Dict:
+    """Update only the document's configuration."""
+    try:
+        # Get existing metadata
+        metadata = chatbot_service._get_document_metadata(key)
+        
+        # Update the config correctly (fix the nesting issue)
+        if "prompt_config" in prompt_config:
+            # Extract the inner config
+            new_config = prompt_config["prompt_config"]
+        else:
+            new_config = prompt_config
 
+        # Create updated config
+        updated_config = {
+            **chatbot_service.DEFAULT_PROMPT_CONFIG,
+            **new_config
+        }
+        
+        # Update metadata with the correct structure
+        metadata["prompt_config"] = updated_config
+        metadata["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Save updated metadata
+        chatbot_service._save_document_metadata(key, metadata)
+        
+        return {
+            "message": "Configuration updated successfully",
+            "key": key,
+            "config": metadata["prompt_config"]  # Return only the prompt config
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating configuration: {str(e)}"
+        )
 
 @app.get("/health")
 async def health_check():
